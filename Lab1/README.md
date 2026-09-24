@@ -5,7 +5,7 @@ Three independent programs that talk over TCP using newline-delimited JSON (NDJS
 | Module | Language | Role | Folder |
 |---|---|---|---|
 | **Broker** | Java 17 | Accepts publishers and subscribers, routes messages per topic, stores unacked messages per subscriber and replays them on reconnect | [`Broker/`](Broker/README.md) |
-| **Publisher** | Node.js + TypeScript | Interactive: every line you type is published to one topic | [`Publisher/`](Publisher/README.md) |
+| **Publisher** | Node.js + TypeScript | Two modes: a **web UI** (several publishers on one page, with demo buttons) or the terminal, where every line you type is published | [`Publisher/`](Publisher/README.md) |
 | **Receiver** | C# / .NET 8 | Subscribes to one or more topics, prints every message and ACKs it | [`Receiver/`](Receiver/README.md) |
 
 ```
@@ -33,20 +33,24 @@ Run every command from this `Lab1/` folder. Make sure Docker Desktop is running.
 docker compose --profile clients build
 ```
 
-**2. Start the broker** (terminal 1):
+**2. Start the broker and the publisher web UI** (terminal 1):
 
 ```bash
-docker compose up broker
+docker compose up broker publisher-ui
 ```
+
+Open **http://localhost:3000**. Add a publisher (id + topic) and start sending messages.
+The UI is described in [Publisher web UI](#publisher-web-ui) below.
 
 **3. Start one or more receivers** (one terminal each):
 
 ```bash
-docker compose run --rm receiver -t news,sports -c alice
+docker compose run --rm receiver -t news,sports -c alice -w 1
 docker compose run --rm receiver -t news -c bob
 ```
 
-**4. Start one or more publishers** (one terminal each, one topic per publisher):
+**4. Optional: terminal publishers** (one terminal each, one topic per publisher), if you
+prefer the terminal to the web UI:
 
 ```bash
 docker compose run --rm publisher publisher-news news broker
@@ -99,7 +103,14 @@ Receiver options: `-h host` (default `127.0.0.1`), `-p port` (default `5000`), `
 (repeat or comma-separate), `-c clientId` (stable id used for replay), `-w workers`,
 `-l logfile`, `--verbose`. Run `--help` for the full list.
 
-**4. Start one or more publishers** (one terminal each):
+**4. Start the publisher web UI**, then open **http://localhost:3000**:
+
+```bash
+node Publisher/dist/index.js --ui                                 # broker 127.0.0.1:5000, UI port 3000
+node Publisher/dist/index.js --ui 127.0.0.1 5000 3000             # [brokerHost] [brokerPort] [uiPort]
+```
+
+Or use terminal publishers instead (one terminal each):
 
 ```bash
 node Publisher/dist/index.js publisher-news news                  # defaults to 127.0.0.1:5000
@@ -107,28 +118,52 @@ node Publisher/dist/index.js publisher-sports sports 127.0.0.1 5000
 ```
 
 Without the build step, you can also run each module from source: `mvn package` in `Broker/`,
-`npm install && npm run dev -- <publisherId> <topic>` in `Publisher/`, and
-`dotnet run -- -t news -c alice` in `Receiver/src/`.
+`npm install` and then `npm run ui` or `npm run dev -- <publisherId> <topic>` in `Publisher/`,
+and `dotnet run -- -t news -c alice` in `Receiver/src/`.
+
+---
+
+## Publisher web UI
+
+![Publisher web UI](Publisher/docs/ui.png)
+
+- **Add publisher:** each publisher gets its own panel and its own TCP connection to the
+  broker. Add several to show topic isolation, or two on the same topic to show that the
+  broker allows only one publisher per topic.
+- **Status badge:** *Connecting*, *Registering*, *Registered*, *Rejected* (with the broker's
+  reason), or *Disconnected* with a countdown to the next reconnect attempt (1s, 2s, 4s … 30s).
+- **Message log:** each message moves from *queued* (waiting for registration) to *sent*
+  (written to the socket) to *acked* (the broker's `publish_ack`). A *rejected* message shows
+  the broker's reason. The counters above the log sum up the statuses.
+- **Send 10:** publishes 10 numbered messages at once, to show ordering.
+- **Drop connection:** closes the TCP connection as if the network failed. Messages sent
+  meanwhile wait as *queued*. The publisher reconnects, registers again, and sends them.
+  Messages that were sent but not yet acked are resent with the same `messageId`.
+- **Send invalid:** sends a deliberately broken frame (missing `messageId`, wrong topic,
+  unknown type, or not JSON). The broker rejects it with a reason and records it in its Dead
+  Letter Queue.
+- **What to try:** a short checklist on the page itself.
 
 ---
 
 ## What to try (feature walkthrough)
 
-Start the broker. Then start receiver `alice` on `news,sports` and publisher `publisher-news` on
-`news`, as shown above.
+Start the broker and the web UI. Start receiver `alice` on `news,sports` with `-w 1`, and in
+the UI add `publisher-news` on `news`, as shown above.
 
 | # | Feature | How to see it |
 |---|---|---|
-| 1 | **Basic routing** | Type `hello` in the publisher. It prints `Published <id> to 'news'`, and alice prints `[time] [news] publisher-news #<id>: hello`. |
-| 2 | **Topic isolation** | Start `publisher-sports` on `sports` and a receiver `bob` on `news` only. Sports messages reach alice but not bob. |
+| 1 | **Basic routing** | Send `hello` from the `publisher-news` panel. It turns *acked*, and alice prints `[time] [news] publisher-news #<id>: hello`. |
+| 2 | **Topic isolation** | Add `publisher-sports` on `sports` and start a receiver `bob` on `news` only. Sports messages reach alice but not bob. |
 | 3 | **Fan-out** | With alice and bob both on `news`, each message from `publisher-news` is printed by both. |
-| 4 | **Subscribe before publish** | Start a receiver on a topic that has no publisher yet, e.g. `-t weather -c carol`, then start a `weather` publisher. Carol receives its messages. |
-| 5 | **Offline storage + replay (at-least-once)** | Stop alice with Ctrl+C. Publish a few `news` messages, then restart alice with the **same** `-c alice`. The missed messages are printed right after she reconnects. The broker log shows `Replaying pending messages`. |
-| 6 | **ACKs** | The broker log shows `Ack received - subscriberId=alice messageId=...` for every delivered message. Acked messages are never replayed again. |
-| 7 | **One publisher per topic** | Start a second publisher with a different id on `news`: `publisher-x news`. The broker rejects it with `Topic 'news' already has a registered publisher`. |
-| 8 | **Publisher reconnect** | Stop the broker and start it again, or stop and restart a publisher with the same id. The publisher reconnects, re-registers, and flushes the messages it queued meanwhile. |
-| 9 | **Validation + Dead Letter Queue** | Every rejected frame is logged by the broker as `[DLQ] Message rejected - reason=...`. To send raw frames yourself, use a TCP client such as `ncat 127.0.0.1 5000`, e.g. `{"type":"publish","publisherId":"ghost"}` or `not json`. |
-| 10 | **Receiver deduplication** | If the broker redelivers a message the receiver has already handled, the receiver skips it and re-ACKs it. Run with `--verbose` to see `Duplicate ... skipped`. |
+| 4 | **Ordering** | Click *Send 10*. Alice (started with `-w 1`) prints #1 … #10 in order. With the default 2 workers, the Receiver may print them slightly out of order; the broker still delivers them in order. |
+| 5 | **Subscribe before publish** | Start a receiver on a topic that has no publisher yet, e.g. `-t weather -c carol`, then add a `weather` publisher in the UI. Carol receives its messages. |
+| 6 | **Offline storage + replay (at-least-once)** | Stop alice with Ctrl+C. Send a few `news` messages, then restart alice with the **same** `-c alice`. The missed messages are printed right after she reconnects. The broker log shows `Replaying pending messages`. |
+| 7 | **ACKs** | The broker log shows `Ack received - subscriberId=alice messageId=...` for every delivered message. Acked messages are never replayed again. |
+| 8 | **One publisher per topic** | Add a second publisher with a different id on `news`, e.g. `intruder`. Its panel shows *Rejected: Topic 'news' already has a registered publisher*. |
+| 9 | **Publisher reconnect** | Click *Drop connection* and send a message right away. It waits as *queued*, then goes to *acked* once the publisher has reconnected and registered again. Restarting the broker shows the same. |
+| 10 | **Validation + Dead Letter Queue** | Pick an invalid frame and click *Send invalid*. The panel shows the broker's reason, and the broker logs `[DLQ] Message rejected - reason=...`. |
+| 11 | **Receiver deduplication** | If the broker redelivers a message the receiver has already handled, the receiver skips it and re-ACKs it. Run with `--verbose` to see `Duplicate ... skipped`. |
 
 > The broker keeps all state **in memory**. Restarting the broker clears topics,
 > registrations and pending messages.

@@ -1,5 +1,6 @@
 package com.pad.broker.net;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.pad.broker.dispatch.MessageDispatcher;
 import com.pad.broker.dlq.DeadLetterQueue;
 import com.pad.broker.model.Message;
@@ -66,7 +67,9 @@ public class ClientConnectionHandler implements Runnable, MessageSender {
         try {
             frame = jsonCodec.decodeFrame(line);
         } catch (Exception e) {
-            String reason = "Invalid JSON: " + e.getMessage();
+            // getOriginalMessage() omits Jackson's multi-line source-location suffix.
+            String detail = e instanceof JsonProcessingException jsonError ? jsonError.getOriginalMessage() : e.getMessage();
+            String reason = "Invalid JSON: " + detail;
             deadLetterQueue.add(line, reason);
             trySend(Message.error(reason));
             return;
