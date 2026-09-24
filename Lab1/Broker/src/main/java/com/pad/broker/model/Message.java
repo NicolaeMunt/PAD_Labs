@@ -26,8 +26,8 @@ public record Message(
         return new Message("error", null, null, null, null, null, null, detail);
     }
 
-    public static Message ackRegistration(String detail) {
-        return new Message("ack_registration", null, null, null, null, null, null, detail);
+    public static Message ackRegistration(String topic, String detail) {
+        return new Message("ack_registration", null, null, null, topic, null, null, detail);
     }
 
     public static Message publishAck(String messageId, String topic) {

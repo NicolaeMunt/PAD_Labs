@@ -50,7 +50,7 @@ public class Main {
         Map<String, MessageHandler> handlersByType = Map.of(
                 "register_publisher", new RegisterPublisherHandler(validator, publisherRegistry, deadLetterQueue),
                 "publish", new PublishHandler(validator, publisherRegistry, topicRegistry, deadLetterQueue),
-                "subscribe", new SubscribeHandler(validator, topicRegistry, subscriptionRegistry, connectionRegistry, messageStore, deadLetterQueue),
+                "subscribe", new SubscribeHandler(validator, topicRegistry, subscriptionRegistry, connectionRegistry, messageStore, deliveryExecutor, deadLetterQueue),
                 "ack", new AckHandler(validator, messageStore, deadLetterQueue)
         );
 

@@ -32,12 +32,13 @@ public class RegisterPublisherHandler implements MessageHandler {
 
         OperationResult registration = publisherRegistry.register(message.publisherId(), message.topic());
         if (!registration.success()) {
+            deadLetterQueue.add(rawLine, registration.reason());
             session.send(Message.error(registration.reason()));
             return;
         }
 
         session.setPublisherId(message.publisherId());
         BrokerLogger.log("Publisher registered", "publisherId=" + message.publisherId() + " topic=" + message.topic());
-        session.send(Message.ackRegistration("Publisher '" + message.publisherId() + "' registered for topic '" + message.topic() + "'"));
+        session.send(Message.ackRegistration(message.topic(), "Publisher '" + message.publisherId() + "' registered for topic '" + message.topic() + "'"));
     }
 }

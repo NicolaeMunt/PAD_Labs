@@ -28,6 +28,8 @@ public class ClientConnectionHandler implements Runnable, MessageSender {
     private final ClientSession session;
     private final Object writeLock = new Object();
     private volatile BufferedWriter writer;
+    // Replies go out in whichever dialect the client last spoke; see WireDialect.
+    private volatile WireDialect dialect = WireDialect.NATIVE;
 
     public ClientConnectionHandler(Socket socket,
                                     MessageDispatcher dispatcher,
@@ -60,21 +62,22 @@ public class ClientConnectionHandler implements Runnable, MessageSender {
     }
 
     private void handleLine(String line) {
-        Message message;
+        JsonCodec.DecodedFrame frame;
         try {
-            message = jsonCodec.decode(line);
+            frame = jsonCodec.decodeFrame(line);
         } catch (Exception e) {
             String reason = "Invalid JSON: " + e.getMessage();
             deadLetterQueue.add(line, reason);
             trySend(Message.error(reason));
             return;
         }
-        dispatcher.dispatch(line, message, session);
+        dialect = frame.dialect();
+        dispatcher.dispatch(line, frame.message(), session);
     }
 
     @Override
     public void send(Message message) throws IOException {
-        String json = jsonCodec.encode(message);
+        String json = jsonCodec.encode(message, dialect);
         synchronized (writeLock) {
             if (writer == null) {
                 throw new IOException("Connection not yet established");

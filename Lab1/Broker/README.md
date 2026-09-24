@@ -134,9 +134,13 @@ to a given `type` are simply omitted (`@JsonInclude(NON_NULL)`), not sent as `nu
 
 ### 3.1 Topics and publishers
 
-- A topic is created lazily, on the **first** `register_publisher` for that name.
+- A topic is created lazily, on the **first** `register_publisher` **or** `subscribe` for that
+  name. Subscribers may therefore connect before the publisher; the publisher claims the
+  topic when it registers.
 - Exactly **one publisher per topic** is allowed (`Topic.trySetPublisher`, enforced
-  atomically). A second `register_publisher` for the same topic gets an `error`.
+  atomically). A `register_publisher` from a *different* publisherId for an owned topic gets an `error`.
+- Re-registering the **same** `publisherId` for the **same** topic is accepted (idempotent),
+  so a publisher that reconnects after a network drop can register again and keep publishing.
 - A publisher may only `publish` to the topic it registered for; anything else is
   rejected with an `error` and logged to the DLQ.
 
@@ -167,8 +171,8 @@ lost) — consumers should treat `messageId` as a dedup key.
 
 `subscriberId` is meant to be **stable across reconnects** (chosen by the client, e.g. a
 hostname or fixed string). On every `subscribe`, right after acking the subscription,
-the broker replays every still-unacked message for that `subscriberId`, in original
-order — this is how a subscriber that was offline catches up.
+the broker replays every still-unacked message for that `subscriberId` **on that topic**, in
+original order — this is how a subscriber that was offline catches up.
 
 Delivery to one subscriber is strictly FIFO (`SubscriberDeliveryExecutor`: one
 single-thread executor per `subscriberId`), so replay order and live order never
@@ -222,8 +226,9 @@ Broker/
     │   ├── BrokerServer.java           accept() loop → one ClientConnectionHandler per socket
     │   ├── ClientConnectionHandler.java NDJSON read loop, decode, dispatch; implements MessageSender
     │   ├── ClientSession.java          per-connection identity (publisherId/subscriberId once known)
-    │   ├── JsonCodec.java              Jackson encode/decode, isolated behind this class
-    │   └── MessageSender.java          "write this message to this client" abstraction
+    │   ├── JsonCodec.java              Jackson encode/decode + native⇄compact dialect translation
+    │   ├── MessageSender.java          "write this message to this client" abstraction
+    │   └── WireDialect.java            NATIVE (Publisher) / COMPACT (Receiver) envelope flavour
     ├── dispatch/
     │   ├── MessageDispatcher.java      routes a decoded Message to its MessageHandler by type
     │   └── MessageHandler.java         one implementation per type
@@ -274,15 +279,33 @@ subscriber ◄──TCP── ClientConnectionHandler ◄───────�
 
 ---
 
-## 6. Known gap: aligning with the Sender/Receiver wire format
+## 6. Compatibility with the Receiver (compact dialect)
 
-The `Receiver` (C#, already merged) implements a **different** envelope than the one
-above: upper-case `type` values (`SUBSCRIBE`/`ACK`/`MESSAGE`/`ERROR`), a single `clientId`
-field instead of separate `publisherId`/`subscriberId`, and no `register_publisher`/
-`publish` types at all (see `Lab1/Receiver/README.md`, §3). As it stands, the Broker and
-the Receiver do **not** speak the same protocol and won't interoperate as-is.
+The `Receiver` (C#) speaks a *compact* variant of the envelope: upper-case `type` values
+(`SUBSCRIBE`/`ACK`/`MESSAGE`/`ERROR`), a single `clientId` field instead of
+`publisherId`/`subscriberId`, and human-readable details in `payload` instead of `message`
+(see `Lab1/Receiver/README.md`, §3). The broker accepts both dialects on the same port:
 
-Before the demo, either the Broker's handlers/`Message` model or the Receiver's
-`Protocol/` layer need to be adjusted so both sides agree on one envelope — worth
-settling once the Sender is merged, since the Sender's assumptions matter here too.
-This README documents the Broker exactly as currently implemented.
+- `JsonCodec.decodeFrame` detects the compact dialect (upper-case `type`, or `clientId` without
+  `publisherId`/`subscriberId`) and normalises it to the native `Message` — `type` is lower-cased,
+  `clientId` fills `publisherId`/`subscriberId`, and an `ACK` without `messageId` takes the id from
+  `payload`. Handlers only ever see the native shape.
+- Each connection remembers the dialect it last spoke (`WireDialect`), and every reply on that
+  connection is encoded in the same dialect:
+
+| Native (internal) | Sent to a compact client as |
+|---|---|
+| `message` | `MESSAGE`, `clientId` = publisherId, plus `topic`, `payload`, `timestamp`, `messageId` |
+| `ack_registration` | `ACK`, `payload` = detail, `topic` |
+| `publish_ack` / `ack_confirmed` | `ACK`, `payload` = `messageId` = the id |
+| `error` | `ERROR`, `payload` = reason |
+
+Compact example session:
+
+```
+→ {"type":"SUBSCRIBE","topic":"news","clientId":"alice","payload":"","timestamp":"..."}
+← {"type":"ACK","clientId":"broker","payload":"Subscribed to topic 'news'","topic":"news","timestamp":"..."}
+← {"type":"MESSAGE","clientId":"pub-1","payload":"Hello","topic":"news","timestamp":"...","messageId":"m-1"}
+→ {"type":"ACK","topic":"news","clientId":"alice","payload":"m-1","timestamp":"...","messageId":"m-1"}
+← {"type":"ACK","clientId":"broker","payload":"m-1","timestamp":"...","messageId":"m-1"}
+```
