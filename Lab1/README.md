@@ -16,7 +16,49 @@ Publisher ──publish──►  Broker  ──MESSAGE──► Receiver
 The broker listens on port **5000**. Start it first; the Publisher and Receiver can then be
 started in any order. Both clients reconnect automatically if the broker restarts.
 
-There are two ways to run the system:
+## Quick start: one command
+
+With Docker Desktop installed, one script builds and starts everything: the broker, the
+publisher web UI (opened in your browser), and four receivers:
+
+| Receiver | Topics | Shows |
+|---|---|---|
+| `alice` | `news`, `sports` | One receiver, several topics |
+| `bob` | `news` | Topic isolation: he never sees `sports` or `weather` |
+| `carol` | `weather` | Subscribing before any publisher exists: add `publisher-weather` / `weather` in the UI and she starts receiving |
+| `dave` | `news`, `sports`, `weather` | Fan-out: he gets a copy of everything |
+
+To change which receivers start, edit the `$receivers` list at the top of `start.ps1`, or
+`RECEIVERS` in `start.sh`.
+
+**Windows:** double-click `start.cmd`, or run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File start.ps1              # build, then start
+powershell -ExecutionPolicy Bypass -File start.ps1 -SkipBuild   # start without rebuilding
+powershell -ExecutionPolicy Bypass -File start.ps1 -Stop        # stop everything
+```
+
+The script starts Docker Desktop if it isn't running. It opens one window for the broker's
+log and one window per receiver. To demonstrate offline replay, press Ctrl+C in Bob's window,
+send a few `news` messages, then press Up and Enter in that window to start Bob again. Press
+Enter in the script's own window to stop everything.
+
+**macOS / Linux / Git Bash:**
+
+```bash
+sh start.sh                  # add --skip-build to start without rebuilding
+```
+
+This follows the broker's and all receivers' logs in the same terminal, with each line
+prefixed by its source (`broker |`, `alice |`, `bob |`, …). Ctrl+C stops everything. The replay demo commands
+are printed when it starts.
+
+Then try the steps in [What to try](#what-to-try-feature-walkthrough).
+
+---
+
+To start each part yourself, there are two ways:
 
 - **Option A: Docker.** You only need Docker Desktop.
 - **Option B: native.** You need JDK 17+ with Maven, Node.js 18+, and the .NET 8 SDK.
