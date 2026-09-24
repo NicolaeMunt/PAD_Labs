@@ -1,11 +1,21 @@
-# Runs the whole system in containers. Only the broker starts with `docker compose up`;
-# publishers and receivers are interactive, so start each one with `docker compose run`
-# (see README.md, "Option A").
+# Runs the whole system in containers. `docker compose up` starts the broker and the publisher
+# web UI (http://localhost:3000). Terminal publishers and receivers are interactive, so start
+# each one with `docker compose run` (see README.md, "Option A").
 services:
   broker:
     build: ./Broker
     ports:
       - "5000:5000"
+    networks:
+      - pad-net
+
+  publisher-ui:
+    build: ./Publisher
+    command: ["--ui", "broker", "5000", "3000"]
+    depends_on:
+      - broker
+    ports:
+      - "3000:3000"
     networks:
       - pad-net
 
