@@ -6,6 +6,13 @@ dependency-reduced-pom.xml
 # .NET
 bin/
 obj/
+Lab1/Receiver/out/
 *.user
 .vs/
 *.log
+
+# Node.js / TypeScript
+node_modules/
+Lab1/Publisher/dist/
+*.tsbuildinfo
+npm-debug.log*

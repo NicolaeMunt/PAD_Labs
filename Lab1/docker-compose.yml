@@ -1,0 +1,33 @@
+# Runs the whole system in containers. Only the broker starts with `docker compose up`;
+# publishers and receivers are interactive, so start each one with `docker compose run`
+# (see README.md, "Option A").
+services:
+  broker:
+    build: ./Broker
+    ports:
+      - "5000:5000"
+    networks:
+      - pad-net
+
+  publisher:
+    build: ./Publisher
+    profiles: ["clients"]
+    depends_on:
+      - broker
+    stdin_open: true
+    tty: true
+    networks:
+      - pad-net
+
+  receiver:
+    build: ./Receiver
+    profiles: ["clients"]
+    depends_on:
+      - broker
+    tty: true
+    networks:
+      - pad-net
+
+networks:
+  pad-net:
+    driver: bridge
